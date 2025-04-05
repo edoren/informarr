@@ -1,1 +1,5 @@
 /target
+/.vscode
+/openapi_generated
+
+/config.y*ml
