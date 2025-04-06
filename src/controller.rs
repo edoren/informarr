@@ -74,9 +74,6 @@ enum EmbedColors {
     DarkVividPink = 12320855,
 }
 
-// TODO:
-// Dar soporte para episodios independientes
-
 #[derive(Debug, Clone, PartialEq)]
 enum NotificationType {
     MediaAvailable,
@@ -88,6 +85,7 @@ enum NotificationType {
 struct NotificationData {
     r#type: NotificationType,
     media_request: MediaRequest,
+    seasons: Option<Vec<i32>>,
     season_number: Option<i32>,
     episode_number: Option<i32>,
 }
@@ -125,24 +123,18 @@ impl NotificationController {
             .text("chat_id", telegram.chat_id.clone())
             .text("parse_mode", "HTML"); // Add the caption text
 
-        let watch_url = media_request
-            .watch_url
-            .as_ref()
-            .map(|v| v.to_string())
-            .unwrap_or_default();
-
         let prefix_text;
         let title;
         let message;
         let mut is_photo = false;
         match data.r#type {
             NotificationType::MediaAvailable => {
-                let seasons_joined = media_request
+                let seasons_joined = data
                     .seasons
                     .as_deref()
                     .unwrap_or_default()
                     .iter()
-                    .map(|s| s.season_number.to_string())
+                    .map(|n| n.to_string())
                     .collect::<Vec<String>>()
                     .join(", ");
 
@@ -157,10 +149,7 @@ impl NotificationController {
                 } else {
                     format!("{} - {}", media_request.media.title, season_string)
                 };
-                message = format!(
-                    "\n\n{}<a href=\"{watch_url}\">Click here to watch it</a>",
-                    media_request.media.overview
-                );
+                message = media_request.media.overview.clone();
             }
             NotificationType::OngoingSeasonAvailable => {
                 prefix_text = "New Content Available";
@@ -174,7 +163,7 @@ impl NotificationController {
                     "{} - {} {}",
                     media_request.media.title, season_string, episode_string
                 );
-                message = format!("<a href=\"{watch_url}\">Click here to watch it</a>");
+                message = media_request.media.overview.clone();
             }
             NotificationType::OngoingEpisodeAvailable => {
                 prefix_text = "New Episode Available";
@@ -188,14 +177,15 @@ impl NotificationController {
                     "{} - {} {}",
                     media_request.media.title, season_string, episode_string
                 );
-                println!("URALA {watch_url}");
-                message = format!("<a href=\"{watch_url}\">Click here to watch it</a>");
+                message = String::new();
             }
         };
 
         form = form.text(
             if is_photo { "caption" } else { "text" },
-            format!("<b>{prefix_text}</b>\n\n<b>{title}</b>\n\n{message}"),
+            format!("<b>{prefix_text}</b>\n\n<b>{title}</b>\n\n{message}")
+                .trim()
+                .to_string(),
         );
 
         self.send_telegram_request(form, is_photo).await?;
@@ -218,10 +208,8 @@ impl NotificationController {
 
         // Send the POST request to the Telegram Bot API
         let url = if is_photo {
-            info!("Sending Photo {bot_token}");
             format!("https://api.telegram.org/bot{}/sendPhoto", bot_token)
         } else {
-            info!("Sending Message");
             format!("https://api.telegram.org/bot{}/sendMessage", bot_token)
         };
         let response = client.post(&url).multipart(form).send().await?;
@@ -308,49 +296,41 @@ impl NotificationController {
         //     };
         // }
 
-        let thumbnail_url = media_request
-            .watch_url
-            .as_ref()
-            .or(media_request.image_url.as_ref())
-            .and_then(|v| Some(v.to_string()))
-            .unwrap_or_default();
-
         let pre_title;
         let title;
         let description;
+
+        let image_url = media_request
+            .image_url
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default();
 
         match data.r#type {
             NotificationType::MediaAvailable => {
                 pre_title = "New Content Available".to_string();
                 title = media_request.media.title.clone();
-                description = format!(
-                    "{}\n\n[Click here to watch it.]({})",
-                    media_request.media.overview, thumbnail_url
-                );
+                description = media_request.media.overview.clone();
 
-                if media_request.r#type == MediaType::TV && media_request.seasons.is_some() {
-                    let seasons_joined = media_request
-                        .seasons
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|s| s.season_number.to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ");
-                    fields.push(json!({
-                      "name": "Seasons",
-                      "value": seasons_joined,
-                      "inline": true,
-                    }));
+                if media_request.r#type == MediaType::TV && data.seasons.is_some() {
+                    if let Some(seasons) = &data.seasons {
+                        let seasons_joined = seasons
+                            .iter()
+                            .map(|n| n.to_string())
+                            .collect::<Vec<String>>()
+                            .join(", ");
+                        fields.push(json!({
+                          "name": "Seasons",
+                          "value": seasons_joined,
+                          "inline": true,
+                        }));
+                    }
                 }
             }
             NotificationType::OngoingSeasonAvailable => {
                 pre_title = "New Content Available".to_string();
                 title = media_request.media.title.clone();
-                description = format!(
-                    "{}\n\n[Click here to watch it.]({})",
-                    media_request.media.overview, thumbnail_url
-                );
+                description = media_request.media.overview.clone();
 
                 let season_string = data.season_number.map_or(String::new(), |s| format!("{s}"));
                 let episode_string = data
@@ -378,7 +358,7 @@ impl NotificationController {
                     .map_or(String::new(), |e| format!("Episode {e}"));
 
                 title = media_request.media.title.clone();
-                description = format!("[Click here to watch it.]({})", thumbnail_url);
+                description = String::new();
 
                 fields.push(json!({
                   "name": "Season",
@@ -410,11 +390,11 @@ impl NotificationController {
                     "timestamp": OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_default(),
                     "author": {
                         "name": pre_title,
-                        "url": thumbnail_url,
+                        "url": image_url,
                     },
                     "fields": fields,
                     "thumbnail": {
-                        "url": thumbnail_url,
+                        "url": image_url,
                     },
                 }
             ]
@@ -443,9 +423,7 @@ impl NotificationController {
             .await?;
 
         // Check if the request was successful
-        if response.status().is_success() {
-            debug!("Message sent successfully!");
-        } else {
+        if !response.status().is_success() {
             error!(
                 "Failed to send message: {:?} {:?}",
                 response.status(),
@@ -559,7 +537,6 @@ impl RequestHandler {
                 .api_get()
                 .await
                 .map_err(|e| anyhow!("Could not retrieve Sonarr API info {e}"))?;
-            debug!("Sonarr: OK");
         }
 
         for instance in &radarr_apis {
@@ -568,7 +545,6 @@ impl RequestHandler {
                 .api_get()
                 .await
                 .map_err(|e| anyhow!("Could not retrieve Radarr API info {e}"))?;
-            debug!("Radarr: OK");
         }
 
         let mut instance = Self {
@@ -604,13 +580,13 @@ impl RequestHandler {
         Ok(instance)
     }
 
-    async fn process_jellyseerr(&mut self, event: JellyseerrEvent) -> Result<&str> {
+    async fn process_jellyseerr(&mut self, event: JellyseerrEvent) -> Result<()> {
         if event.notification_type == webhooks::jellyseerr::NotificationType::MediaApproved
             || event.notification_type == webhooks::jellyseerr::NotificationType::MediaAutoApproved
         {
             let request_id = match event.request {
                 Some(request) => request.request_id,
-                None => return Ok("ok"),
+                None => return Ok(()),
             };
 
             if let Ok(media_request) = self
@@ -627,19 +603,20 @@ impl RequestHandler {
             }
         }
 
-        Ok("ok")
+        Ok(())
     }
 
-    async fn process_sonarr(&mut self, event: SonarrEvent) -> Result<&str> {
+    async fn process_sonarr(&mut self, event: SonarrEvent) -> Result<()> {
         let download_event = match event {
             SonarrEvent::Download(event) => event,
-            _ => return Ok("ok"),
+            _ => return Ok(()),
         };
 
         let is_import_completed_event = download_event.episode_files.is_some();
         let is_upgrade = download_event.is_upgrade;
         if is_import_completed_event || is_upgrade {
-            return Ok("Is import complete or upgrade, skipping");
+            debug!("Is import complete or upgrade, skipping");
+            return Ok(());
         }
 
         let requested_show = self
@@ -652,7 +629,28 @@ impl RequestHandler {
                 download_event.series.tmdb_id
             ))?;
 
-        let found_series = {
+        let requested_seasons = requested_show.seasons.as_ref().ok_or(anyhow!(
+            "Could not find seasons for requested show with tmdb id {}",
+            download_event.series.tmdb_id
+        ))?;
+
+        let event_seasons: Vec<i32> = download_event
+            .episodes
+            .iter()
+            .map(|episode| episode.season_number)
+            .collect();
+
+        let requested_seasons_with_event: Vec<&SeasonInfo> = requested_seasons
+            .iter()
+            .filter(|season| event_seasons.contains(&season.season_number))
+            .collect();
+
+        if requested_seasons_with_event.is_empty() {
+            debug!("No seasons to update");
+            return Ok(());
+        }
+
+        let sonarr_series = {
             let mut series = None;
             for api in &self.sonarr_apis {
                 if let Ok(res) = api
@@ -674,147 +672,151 @@ impl RequestHandler {
             ))?
         };
 
-        let found_seasons = found_series
+        let sonarr_seasons = sonarr_series
             .seasons
             .unwrap_or_default()
             .ok_or(anyhow!("Could not find Sonarr series seasons not present"))?;
+        let mut sonarr_available_seasons: Vec<&SonarrSeasonResource> = Vec::new();
+        let mut sonarr_completed_seasons = Vec::new();
+        let mut sonarr_ongoing_seasons = Vec::new();
+        for season in &sonarr_seasons {
+            if let Some(stats) = &season.statistics {
+                let same_episode_count = stats
+                    .episode_count
+                    .is_some_and(|v| v != 0 && Some(v) == stats.total_episode_count);
+                if stats.next_airing.is_some() || !same_episode_count {
+                    sonarr_ongoing_seasons.push(season);
+                } else if same_episode_count {
+                    sonarr_completed_seasons.push(season);
+                    if stats
+                        .episode_file_count
+                        .is_some_and(|v| Some(v) == stats.total_episode_count)
+                    {
+                        sonarr_available_seasons.push(season);
+                    }
+                }
+            }
+        }
 
-        // TODO: Fix to last ongoing season
-        let not_completed_seasons: Vec<&SonarrSeasonResource> = requested_show
-            .seasons
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|requested_season| {
-                found_seasons.iter().find(|season| {
-                    let is_same_season = season.season_number.is_some_and(|season_number| {
-                        season_number == requested_season.season_number
-                    });
-                    let has_missing_episodes = season
-                        .statistics
-                        .as_ref()
-                        .is_some_and(|stats| stats.episode_file_count != stats.total_episode_count);
-                    is_same_season && has_missing_episodes
+        let requested_matching_count = |seasons: &Vec<&SonarrSeasonResource>| {
+            requested_seasons_with_event
+                .iter()
+                .filter(|requested_season| {
+                    seasons
+                        .iter()
+                        .find(|sonarr_season| {
+                            sonarr_season
+                                .season_number
+                                .is_some_and(|n| n == requested_season.season_number)
+                        })
+                        .is_some()
                 })
-            })
-            .collect();
+                .map(|r| *r)
+                .collect::<Vec<&SeasonInfo>>()
+        };
+
+        let available_requested = requested_matching_count(&sonarr_available_seasons);
+        let completed_requested = requested_matching_count(&sonarr_completed_seasons);
 
         // SEASONS REQUESTED AVALIABLE NOTIFICATION
-        if not_completed_seasons.is_empty() {
+        if completed_requested.len() == available_requested.len() {
             self.notifier
                 .send_notification(
                     NotificationData::builder()
                         .r#type(NotificationType::MediaAvailable)
                         .media_request(requested_show.clone())
+                        .seasons(
+                            available_requested
+                                .iter()
+                                .map(|season| season.season_number)
+                                .collect(),
+                        )
                         .build(),
                 )
                 .await;
             self.remove_request(&requested_show);
-            return Ok("ok");
+            return Ok(());
         }
-
-        println!("Checkpoint 1");
 
         // ONGOING SEASON NOTIFICATION
-        let last_ongoing_season = found_seasons
-            .iter()
-            .max_by(|a, b| a.season_number.cmp(&b.season_number))
-            .ok_or(anyhow!("Could not get last ongoing season"))?;
-        let last_major_not_completed_season = not_completed_seasons
-            .iter()
-            .max_by(|a, b| a.season_number.cmp(&b.season_number))
-            .ok_or(anyhow!("Could not get last major not completed season"))?;
-
-        if last_major_not_completed_season
-            .season_number
-            .is_some_and(|v| Some(v) == last_ongoing_season.season_number)
-        {
-            let downloaded_episodes = last_ongoing_season
-                .statistics
-                .as_ref()
-                .and_then(|stats| stats.episode_file_count)
-                .unwrap_or(0);
-            let ongoing_episode_num = last_ongoing_season
-                .statistics
-                .as_ref()
-                .and_then(|stats| stats.episode_count)
-                .unwrap_or(0);
-            let total_episodes = last_ongoing_season
-                .statistics
-                .as_ref()
-                .and_then(|stats| stats.total_episode_count)
-                .unwrap_or(0);
-
-            println!("Downloaded: {downloaded_episodes}");
-            println!("Ongoing: {ongoing_episode_num}");
-            println!("Total: {total_episodes}");
-
-            if downloaded_episodes == total_episodes && downloaded_episodes == ongoing_episode_num {
-                return Err(anyhow!(
-                    "Processing last episode here. This should not happen"
-                ));
-            }
-
-            let episode_downloaded = download_event
-                .episodes
-                .iter()
-                .max_by(|a, b| a.episode_number.cmp(&b.episode_number));
-
-            println!("Episode downloaded: {:?}", episode_downloaded);
-            println!("Request Creation: {:?}", requested_show.created_at);
-
-            if let Some(episode) = episode_downloaded {
-                let episode_air_date = episode
-                    .air_date_utc
-                    .as_ref()
-                    .and_then(|v| OffsetDateTime::parse(v, &Rfc3339).ok());
-                println!("Episode Air Date: {:?}", episode_air_date);
-
-                if episode.episode_number == downloaded_episodes
-                    && episode.episode_number == ongoing_episode_num
-                {
-                    if episode_air_date > Some(requested_show.created_at)
-                        || episode.episode_number == 1
-                    {
-                        // Single episode notification
-                        self.notifier
-                            .send_notification(
-                                NotificationData::builder()
-                                    .r#type(NotificationType::OngoingEpisodeAvailable)
-                                    .media_request(requested_show)
-                                    .season_number(episode.season_number)
-                                    .episode_number(episode.episode_number)
-                                    .build(),
-                            )
-                            .await;
-                    } else {
-                        // Total episode notification
-                        self.notifier
-                            .send_notification(
-                                NotificationData::builder()
-                                    .r#type(NotificationType::OngoingSeasonAvailable)
-                                    .media_request(requested_show)
-                                    .season_number(episode.season_number)
-                                    .episode_number(episode.episode_number)
-                                    .build(),
-                            )
-                            .await;
-                    }
-                }
-            }
-
-            return Ok("ok");
+        let ongoing_requested = requested_matching_count(&sonarr_ongoing_seasons);
+        if ongoing_requested.is_empty() {
+            debug!("No ongoing seasons to update");
+            return Ok(());
         }
 
-        println!("Checkpoint LASTO");
+        let sonarr_first_ongoing_season = sonarr_ongoing_seasons
+            .iter()
+            .min_by(|a, b| a.season_number.cmp(&b.season_number))
+            .map(|v| *v)
+            .ok_or(anyhow!("Could not get first ongoing season"))?;
+        let first_requested_ongoing_season = ongoing_requested
+            .iter()
+            .min_by(|a, b| a.season_number.cmp(&b.season_number))
+            .map(|v| *v)
+            .ok_or(anyhow!("Could not get first requested ongoing season"))?;
 
-        return Ok("ok");
+        // Only send notifications when we confirm that the latest episode of the ongoing season has been downloaded
+        let should_send_notification = sonarr_first_ongoing_season
+            .statistics
+            .as_ref()
+            .is_some_and(|stats| stats.episode_file_count != stats.episode_count)
+            && (sonarr_first_ongoing_season.season_number
+                == Some(first_requested_ongoing_season.season_number));
+        if should_send_notification {
+            debug!("Missing episodes to send notification");
+            return Ok(());
+        }
+
+        let last_episode_season = sonarr_first_ongoing_season
+            .season_number
+            .ok_or(anyhow!("Could not get last episode season"))?;
+        let last_episode_number = sonarr_first_ongoing_season
+            .statistics
+            .as_ref()
+            .and_then(|stats| stats.episode_count)
+            .ok_or(anyhow!("Could not get last episode number"))?;
+        let last_episode_air_date = sonarr_first_ongoing_season
+            .statistics
+            .as_ref()
+            .and_then(|stats| stats.previous_airing.as_ref())
+            .and_then(|prev_airing_opt| prev_airing_opt.as_deref())
+            .and_then(|prev_airing| OffsetDateTime::parse(&prev_airing, &Rfc3339).ok())
+            .ok_or(anyhow!("Could not get last episode air date"))?;
+
+        if last_episode_air_date > requested_show.created_at || last_episode_number == 1 {
+            // Single episode notification
+            self.notifier
+                .send_notification(
+                    NotificationData::builder()
+                        .r#type(NotificationType::OngoingEpisodeAvailable)
+                        .media_request(requested_show)
+                        .season_number(last_episode_season)
+                        .episode_number(last_episode_number)
+                        .build(),
+                )
+                .await;
+        } else {
+            // Total episode notification
+            self.notifier
+                .send_notification(
+                    NotificationData::builder()
+                        .r#type(NotificationType::OngoingSeasonAvailable)
+                        .media_request(requested_show)
+                        .season_number(last_episode_season)
+                        .episode_number(last_episode_number)
+                        .build(),
+                )
+                .await;
+        }
+
+        return Ok(());
     }
 
-    async fn process_radarr(&mut self, event: RadarrEvent) -> Result<&str> {
+    async fn process_radarr(&mut self, event: RadarrEvent) -> Result<()> {
         let download_event = match event {
             RadarrEvent::Download(event) => event,
-            _ => return Ok("ok"),
+            _ => return Ok(()),
         };
 
         if let Some(requested_movie) = self
@@ -832,7 +834,7 @@ impl RequestHandler {
             self.remove_request(&requested_movie);
         }
 
-        Ok("ok")
+        Ok(())
     }
 
     fn get_tv_request(&self, tmdb_id: i32, tvdb_id: Option<i32>) -> Option<MediaRequest> {
@@ -901,7 +903,6 @@ impl RequestHandler {
             .ok_or(anyhow!("Could not get media"))?;
 
         // if AVAILABLE
-        // TODO: Check with Sonarr and Radarr
         if media.status.unwrap_or(0) == 5 {
             return Ok(());
         }
@@ -957,7 +958,7 @@ impl RequestHandler {
             })
         });
 
-        let watch_url: Option<Url> = media.media_url.as_ref().and_then(|v| Url::parse(v).ok());
+        // let watch_url = media.media_url.as_ref().and_then(|v| Url::parse(v).ok());
 
         if media_type == "tv" {
             let show = self
@@ -1019,7 +1020,7 @@ impl RequestHandler {
                         ))
                         .ok()
                     }),
-                    watch_url: watch_url,
+                    // watch_url: watch_url,
                     seasons: Some(requested_seasons),
                 };
 
@@ -1055,7 +1056,7 @@ impl RequestHandler {
                     ))
                     .ok()
                 }),
-                watch_url: watch_url,
+                // watch_url: watch_url,
                 seasons: None,
             };
 
@@ -1099,7 +1100,6 @@ struct MediaRequest {
     created_at: OffsetDateTime,
     requested_by: User,
     image_url: Option<Url>,
-    watch_url: Option<Url>,
     seasons: Option<Vec<SeasonInfo>>,
 }
 
@@ -1154,9 +1154,8 @@ pub async fn run(
             }
         };
 
-        match result {
-            Ok(msg) => warn!("{msg}"),
-            Err(e) => error!("Failed processing: {e}"),
+        if let Err(e) = result {
+            error!("Failed processing: {e}");
         }
     }
 }
