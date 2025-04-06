@@ -2,7 +2,6 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Json, extract::State};
 use log::error;
-use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
@@ -313,17 +312,12 @@ pub fn router(
 )]
 async fn get_webhook(
     State((state, closer)): State<(mpsc::UnboundedSender<SonarrEvent>, watch::Sender<bool>)>,
-    json: Json<Value>,
+    json_str: String,
 ) -> impl IntoResponse {
-    let data = match serde_json::from_value::<SonarrEvent>(json.clone().take()) {
-        // TODO: Avoid clone
+    let data = match serde_json::from_str::<SonarrEvent>(&json_str) {
         Ok(data) => data,
         Err(e) => {
-            error!("{}", e.to_string());
-            error!(
-                "JSON: {}",
-                serde_json::to_string(&json.clone().take()).unwrap_or_default()
-            );
+            error!("{e} - JSON: {}", json_str);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(MessageResponse::new(e.to_string())),
@@ -331,11 +325,7 @@ async fn get_webhook(
         }
     };
     if let Err(e) = state.send(data) {
-        error!("{}", e.to_string());
-        error!(
-            "JSON: {}",
-            serde_json::to_string(&json.clone().take()).unwrap_or_default()
-        );
+        error!("{e} - JSON: {}", json_str);
         if let Err(e) = closer.send(true) {
             error!("Could not send close request: {e}");
         }
