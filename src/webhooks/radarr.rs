@@ -283,6 +283,25 @@ pub enum RadarrEvent {
     Test(TestEvent),
 }
 
+impl std::fmt::Display for RadarrEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let event_name = match self {
+            Self::Grab(_) => "Grab",
+            Self::Download(_) => "Download",
+            Self::MovieAdded(_) => "MovieAdded",
+            Self::MovieFileDelete(_) => "MovieFileDelete",
+            Self::MovieDelete(_) => "MovieDelete",
+            Self::Rename(_) => "Rename",
+            Self::Health(_) => "Health",
+            Self::HealthRestored(_) => "HealthRestored",
+            Self::ApplicationUpdate(_) => "ApplicationUpdate",
+            Self::ManualInteractionRequired(_) => "ManualInteractionRequired",
+            Self::Test(_) => "Test",
+        };
+        write!(f, "{}", event_name)
+    }
+}
+
 pub fn router(
     sender: mpsc::UnboundedSender<RadarrEvent>,
     closer: watch::Sender<bool>,

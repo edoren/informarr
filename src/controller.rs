@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Result, anyhow};
 use bon::Builder;
 use log::{debug, error, info, warn};
@@ -5,7 +7,10 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    time::Instant,
+};
 
 use jellyseerr::{
     apis::{
@@ -199,7 +204,7 @@ impl NotificationController {
         is_photo: bool,
     ) -> Result<()> {
         let bot_token = match self.telegram {
-            Some(ref config) => config.bot_token.clone(),
+            Some(ref config) => &config.bot_token,
             None => return Ok(()),
         };
 
@@ -407,7 +412,7 @@ impl NotificationController {
 
     async fn send_discord_request(&self, data: Value) -> Result<()> {
         let webhook_url = match self.discord {
-            Some(ref config) => config.webhook_url.clone(),
+            Some(ref config) => &config.webhook_url,
             None => return Ok(()),
         };
 
@@ -416,7 +421,7 @@ impl NotificationController {
 
         // Send the message via the Webhook URL using a POST request
         let response = client
-            .post(webhook_url.clone())
+            .post(webhook_url)
             .header("Content-Type", "application/json")
             .json(&data)
             .send()
@@ -450,12 +455,11 @@ impl RequestHandler {
             base_path: format!("{}/{}", app_config.url, "api/v1"),
             api_key: Some(jellyseerr::apis::configuration::ApiKey {
                 prefix: None,
-                key: app_config.api_key.clone(),
+                key: app_config.api_key,
             }),
             ..Default::default()
         };
         app_config.url.clear();
-        app_config.api_key.clear();
         let jellyseerr_api = jellyseerr::apis::ApiClient::new(config.into());
 
         let convert_to_url = |use_ssl, host, port| {
@@ -556,26 +560,10 @@ impl RequestHandler {
             notifier: NotificationController::new(app_config.discord, app_config.telegram),
         };
 
-        let num_requests = instance
-            .jellyseerr_api
-            .request_api()
-            .request_count_get()
-            .await?;
-        for media_request in instance
-            .jellyseerr_api
-            .request_api()
-            .request_get(
-                jellyseerr::apis::request_api::RequestGetParams::builder()
-                    .take(num_requests.approved.unwrap_or(250.0))
-                    .filter("approved".into())
-                    .build(),
-            )
-            .await?
-            .results
-            .unwrap_or_default()
-        {
-            instance.process_request(media_request).await?;
-        }
+        instance
+            .fetch_requests()
+            .await
+            .map_err(|e| anyhow!("Could not fetch initial requests: {e}"))?;
 
         Ok(instance)
     }
@@ -624,6 +612,7 @@ impl RequestHandler {
                 download_event.series.tmdb_id,
                 Some(download_event.series.tvdb_id),
             )
+            .cloned()
             .ok_or(anyhow!(
                 "Could not find requested show with tmdb id {}",
                 download_event.series.tmdb_id
@@ -837,11 +826,10 @@ impl RequestHandler {
         Ok(())
     }
 
-    fn get_tv_request(&self, tmdb_id: i32, tvdb_id: Option<i32>) -> Option<MediaRequest> {
+    fn get_tv_request(&self, tmdb_id: i32, tvdb_id: Option<i32>) -> Option<&MediaRequest> {
         let mut requested_shows = self
             .requested
             .iter()
-            .cloned()
             .filter(|request| request.r#type == MediaType::TV);
 
         requested_shows.find(|request| {
@@ -890,6 +878,45 @@ impl RequestHandler {
             .tv_tv_id_get(TvTvIdGetParams::builder().tv_id(tmdb_id as f64).build())
             .await
             .map_err(|e| anyhow!("Could not get show with id {tmdb_id}: {e}"))
+    }
+
+    async fn fetch_requests(&mut self) -> Result<()> {
+        self.requested.clear();
+
+        let num_requests = self
+            .jellyseerr_api
+            .request_api()
+            .request_count_get()
+            .await?
+            .approved
+            .unwrap_or(0.0) as usize;
+
+        let batch_size = 100;
+        let mut offset = 0;
+
+        while offset < num_requests {
+            let requests = self
+                .jellyseerr_api
+                .request_api()
+                .request_get(
+                    jellyseerr::apis::request_api::RequestGetParams::builder()
+                        .take(batch_size as f64)
+                        .skip(offset as f64)
+                        .filter("approved".into())
+                        .build(),
+                )
+                .await?
+                .results
+                .unwrap_or_default();
+
+            for media_request in requests {
+                self.process_request(media_request).await?;
+            }
+
+            offset += batch_size;
+        }
+
+        Ok(())
     }
 
     async fn process_request(&mut self, media_request: JellyseerrMediaRequest) -> Result<()> {
@@ -994,10 +1021,9 @@ impl RequestHandler {
                 .collect::<Vec<i32>>();
 
             let seasons_missing = requested_seasons
-                .clone()
-                .into_iter()
+                .iter()
                 .filter(|s| !available_seasons.contains(&s.season_number))
-                .collect::<Vec<SeasonInfo>>();
+                .collect::<Vec<&SeasonInfo>>();
 
             if !seasons_missing.is_empty() {
                 let processed_request = MediaRequest {
@@ -1024,7 +1050,7 @@ impl RequestHandler {
                     seasons: Some(requested_seasons),
                 };
 
-                info!("Request Added: {:?}", processed_request);
+                debug!("Request added: {:?}", processed_request);
                 self.requested.push(processed_request);
             }
         } else if media_type == "movie" {
@@ -1060,7 +1086,7 @@ impl RequestHandler {
                 seasons: None,
             };
 
-            info!("Request Added: {:?}", processed_request);
+            debug!("Request added: {:?}", processed_request);
             self.requested.push(processed_request);
         }
 
@@ -1108,54 +1134,55 @@ pub async fn run(
     mut sonarr_rx: mpsc::UnboundedReceiver<SonarrEvent>,
     mut radarr_rx: mpsc::UnboundedReceiver<RadarrEvent>,
     mut jellyseerr_rx: mpsc::UnboundedReceiver<JellyseerrEvent>,
-    closer_tx: watch::Sender<bool>,
+    close_tx: watch::Sender<bool>,
+    mut close_rx: watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut request_handler = match RequestHandler::new(app_config.clone()).await {
+    let mut request_handler = match RequestHandler::new(app_config).await {
         Ok(handler) => handler,
         Err(e) => {
-            let _ = closer_tx.send(true);
+            let _ = close_tx.send(true);
             return Err(anyhow!("Failed to initialize request handler: {e}"));
         }
     };
 
+    let scan_interval = Duration::from_secs(60 * 30);
+    let mut next_scan_requests = Instant::now() + scan_interval;
+
     loop {
-        let result = tokio::select! {
+        tokio::select! {
             Some(event) = sonarr_rx.recv() => {
-                warn!("Received from Sonarr: {}", serde_json::to_string(&event).unwrap_or_default());
-                request_handler.process_sonarr(event).await
+                info!("Processing Sonarr event: {}", event);
+                debug!("Received from Sonarr: {}", serde_json::to_string(&event).unwrap_or_default());
+                if let Err(e) = request_handler.process_sonarr(event).await {
+                    error!("Failed processing Sonarr event: {e}");
+                }
             },
             Some(event) = radarr_rx.recv() => {
-                warn!("Received from Radarr: {}", serde_json::to_string(&event).unwrap_or_default());
-                request_handler.process_radarr(event).await
+                info!("Processing Radarr event: {}", event);
+                debug!("Received from Radarr: {}", serde_json::to_string(&event).unwrap_or_default());
+                if let Err(e) = request_handler.process_radarr(event).await {
+                    error!("Failed processing Radarr event: {e}");
+                }
             },
             Some(event) = jellyseerr_rx.recv() => {
-                warn!("Received from Jellyseerr: {}", serde_json::to_string(&event).unwrap_or_default());
-                request_handler.process_jellyseerr(event).await
+                info!("Processing Jellyseerr event: {}", event.notification_type);
+                debug!("Received from Jellyseerr: {}", serde_json::to_string(&event).unwrap_or_default());
+                if let Err(e) = request_handler.process_jellyseerr(event).await {
+                    error!("Failed processing Jellyseerr event: {e}");
+                }
             }
-            // Some(event) = sonarr_rx.recv() => {
-            //     warn!("Received from Sonarr: {}", serde_json::to_string(&event).unwrap_or_default());
-            //     if let Err(e) = request_handler.process_sonarr(event).await {
-            //         error!("Failed processing Sonarr: {e}");
-            //     }
-            // },
-            // Some(event) = radarr_rx.recv() => {
-            //     warn!("Received from Radarr: {}", serde_json::to_string(&event).unwrap_or_default());
-            //     if let Err(e) = request_handler.process_radarr(event).await {
-            //         error!("Failed processing Radarr: {e}");
-            //     }
-            // },
-            // Some(event) = jellyseerr_rx.recv() => {
-            //     warn!("Received from Jellyseerr: {}", serde_json::to_string(&event).unwrap_or_default());
-
-            // }
-            else => {
-                debug!("Closing, all channels closed");
-                break Ok(());
+            _ = tokio::time::sleep_until(next_scan_requests.into()) => {
+                if let Err(e) = request_handler.fetch_requests().await {
+                    error!("Failed to update requests: {e}");
+                }
+                next_scan_requests = Instant::now() + scan_interval;
+            }
+            result = close_rx.changed() => {
+                debug!("Closing controller");
+                if result.is_ok() && *close_rx.borrow_and_update() {
+                    break Ok(());
+                }
             }
         };
-
-        if let Err(e) = result {
-            error!("Failed processing: {e}");
-        }
     }
 }

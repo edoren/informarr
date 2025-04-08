@@ -88,7 +88,7 @@ async fn logging_middleware(req: Request<Body>, next: Next) -> Response {
     next.run(req).await
 }
 
-async fn shutdown_signal(mut close_rx: watch::Receiver<bool>) {
+async fn shutdown_signal(close_tx: watch::Sender<bool>, mut close_rx: watch::Receiver<bool>) {
     let ctrl_c = || async move {
         signal::ctrl_c()
             .await
@@ -106,22 +106,28 @@ async fn shutdown_signal(mut close_rx: watch::Receiver<bool>) {
     #[cfg(not(unix))]
     let terminate = || async move { std::future::pending::<()>().await };
 
-    loop {
+    let send_close = loop {
         tokio::select! {
             _ = ctrl_c() => {
                 debug!("Process interrupted");
-                break;
+                break true;
             },
             _ = terminate() => {
                 debug!("Process terminated");
-                break;
+                break true;
             },
             result = close_rx.changed() => {
                 debug!("Close requested");
                 if result.is_ok() && *close_rx.borrow_and_update() {
-                    break ;
+                    break false;
                 }
             }
+        }
+    };
+
+    if send_close {
+        if let Err(e) = close_tx.send(true) {
+            error!("Could not send close request: {e}");
         }
     }
 }
@@ -156,6 +162,7 @@ async fn main() -> Result<()> {
         radarr_rx,
         jellyseerr_rx,
         close_tx.clone(),
+        close_rx.clone(),
     ));
 
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
@@ -169,7 +176,7 @@ async fn main() -> Result<()> {
         )
         .nest(
             "/api/v1/jellyseerr",
-            webhooks::jellyseerr::router(jellyseerr_tx, close_tx),
+            webhooks::jellyseerr::router(jellyseerr_tx, close_tx.clone()),
         )
         .layer(middleware::from_fn(logging_middleware))
         .split_for_parts();
@@ -178,7 +185,7 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal(close_rx))
+        .with_graceful_shutdown(shutdown_signal(close_tx, close_rx))
         .await?;
 
     if let Err(err) = worker.await? {

@@ -289,6 +289,25 @@ pub enum SonarrEvent {
     Test(TestEvent),
 }
 
+impl std::fmt::Display for SonarrEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let event_name = match self {
+            Self::Grab(_) => "Grab",
+            Self::Download(_) => "Download",
+            Self::EpisodeFileDelete(_) => "EpisodeFileDelete",
+            Self::SeriesAdd(_) => "SeriesAdd",
+            Self::SeriesDelete(_) => "SeriesDelete",
+            Self::Rename(_) => "Rename",
+            Self::Health(_) => "Health",
+            Self::HealthRestored(_) => "HealthRestored",
+            Self::ApplicationUpdate(_) => "ApplicationUpdate",
+            Self::ManualInteractionRequired(_) => "ManualInteractionRequired",
+            Self::Test(_) => "Test",
+        };
+        write!(f, "{}", event_name)
+    }
+}
+
 pub fn router(
     sender: mpsc::UnboundedSender<SonarrEvent>,
     closer: watch::Sender<bool>,

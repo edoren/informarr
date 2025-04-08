@@ -152,6 +152,27 @@ pub enum NotificationType {
     MediaAutoRequested,
 }
 
+impl std::fmt::Display for NotificationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let event_name = match self {
+            Self::None => "None",
+            Self::MediaPending => "MediaPending",
+            Self::MediaApproved => "MediaApproved",
+            Self::MediaAvailable => "MediaAvailable",
+            Self::MediaFailed => "MediaFailed",
+            Self::TestNotification => "TestNotification",
+            Self::MediaDeclined => "MediaDeclined",
+            Self::MediaAutoApproved => "MediaAutoApproved",
+            Self::IssueCreated => "IssueCreated",
+            Self::IssueComment => "IssueComment",
+            Self::IssueResolved => "IssueResolved",
+            Self::IssueReopened => "IssueReopened",
+            Self::MediaAutoRequested => "MediaAutoRequested",
+        };
+        write!(f, "{}", event_name)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct JellyseerrEvent {
     pub notification_type: NotificationType,
