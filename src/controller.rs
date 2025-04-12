@@ -680,12 +680,10 @@ impl RequestHandler {
         let mut sonarr_ongoing_seasons = Vec::new();
         for season in &sonarr_monitored_seasons {
             if let Some(stats) = &season.statistics {
-                let same_episode_count = stats
-                    .episode_count
-                    .is_some_and(|v| v != 0 && Some(v) == stats.total_episode_count);
-                if stats.next_airing.is_some() || !same_episode_count {
+                let is_season_ongoing = stats.next_airing.is_some();
+                if is_season_ongoing {
                     sonarr_ongoing_seasons.push(season);
-                } else if same_episode_count {
+                } else {
                     sonarr_completed_seasons.push(season);
                     if stats
                         .episode_file_count
