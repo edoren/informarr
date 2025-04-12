@@ -708,7 +708,9 @@ impl RequestHandler {
         let completed_requested = requested_matching_count(&sonarr_completed_seasons);
 
         // SEASONS REQUESTED AVALIABLE NOTIFICATION
-        if completed_requested.len() == available_requested.len() {
+        if completed_requested.len() != 0 && completed_requested.len() == available_requested.len()
+        {
+            info!("Sending notification for request available");
             self.notifier
                 .send_notification(
                     NotificationData::builder()
@@ -774,7 +776,7 @@ impl RequestHandler {
             .ok_or(anyhow!("Could not get last episode air date"))?;
 
         if last_episode_air_date > requested_show.created_at || last_episode_number == 1 {
-            // Single episode notification
+            info!("Sending notification for single episode available");
             self.notifier
                 .send_notification(
                     NotificationData::builder()
@@ -786,7 +788,7 @@ impl RequestHandler {
                 )
                 .await;
         } else {
-            // Total episode notification
+            info!("Sending notification for multiple ongoing episodes available");
             self.notifier
                 .send_notification(
                     NotificationData::builder()
