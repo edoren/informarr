@@ -661,14 +661,24 @@ impl RequestHandler {
             ))?
         };
 
-        let sonarr_seasons = sonarr_series
+        let sonarr_monitored_seasons = sonarr_series
             .seasons
             .unwrap_or_default()
-            .ok_or(anyhow!("Could not find Sonarr series seasons not present"))?;
+            .ok_or(anyhow!(
+                "Could not find seasons for the specified Sonarr series"
+            ))?
+            .into_iter()
+            .filter(|season| season.monitored.unwrap_or(false))
+            .collect::<Vec<_>>();
+
+        if sonarr_monitored_seasons.is_empty() {
+            return Err(anyhow!("Could not find monitored Sonarr series seasons"));
+        }
+
         let mut sonarr_available_seasons: Vec<&SonarrSeasonResource> = Vec::new();
         let mut sonarr_completed_seasons = Vec::new();
         let mut sonarr_ongoing_seasons = Vec::new();
-        for season in &sonarr_seasons {
+        for season in &sonarr_monitored_seasons {
             if let Some(stats) = &season.statistics {
                 let same_episode_count = stats
                     .episode_count
