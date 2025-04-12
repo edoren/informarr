@@ -977,15 +977,9 @@ impl RequestHandler {
             .or_else(|| user.jellyfin_username.clone().unwrap_or_default())
             .or_else(|| user.plex_username.clone().unwrap_or_default())
             .ok_or(anyhow!("Display name not set"))?;
-        let discord_id = user.settings.and_then(|settings| {
-            settings.notification_types.clone().and_then(|types| {
-                if types.discord.is_some_and(|v| v == 8.0) {
-                    settings.discord_id.unwrap_or_default()
-                } else {
-                    None
-                }
-            })
-        });
+        let discord_id = user
+            .settings
+            .and_then(|settings| settings.discord_id.unwrap_or_default());
 
         // let watch_url = media.media_url.as_ref().and_then(|v| Url::parse(v).ok());
 
