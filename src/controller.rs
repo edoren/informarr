@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use bon::Builder;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use reqwest::Url;
 use serde_json::{Value, json};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -930,6 +930,7 @@ impl RequestHandler {
     }
 
     async fn process_request(&mut self, media_request: JellyseerrMediaRequest) -> Result<()> {
+        trace!("Processing request: {:?}", media_request);
         let media_type = media_request
             .r#type
             .as_ref()
@@ -1054,7 +1055,7 @@ impl RequestHandler {
                     seasons: Some(requested_seasons),
                 };
 
-                debug!("Request added: {:?}", processed_request);
+                trace!("Request added: {:?}", processed_request);
                 self.requested.push(processed_request);
             }
         } else if media_type == "movie" {
@@ -1090,7 +1091,7 @@ impl RequestHandler {
                 seasons: None,
             };
 
-            debug!("Request added: {:?}", processed_request);
+            trace!("Request added: {:?}", processed_request);
             self.requested.push(processed_request);
         }
 
