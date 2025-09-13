@@ -1,7 +1,6 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use log::{error, trace};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
