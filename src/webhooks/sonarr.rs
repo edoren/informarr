@@ -328,14 +328,10 @@ pub fn router(
 )]
 async fn get_webhook(
     State((state, closer)): State<(mpsc::UnboundedSender<SonarrEvent>, watch::Sender<bool>)>,
-    mut json: Json<Value>,
+    json_str: String,
 ) -> impl IntoResponse {
-    let json_value = json.take();
-    trace!(
-        "Event JSON: {}",
-        serde_json::to_string(&json_value).unwrap_or("Error Parsing".to_string())
-    );
-    let data = match serde_json::from_value::<SonarrEvent>(json_value) {
+    trace!("Event JSON: {}", json_str);
+    let data = match serde_json::from_str::<SonarrEvent>(&json_str) {
         Ok(data) => data,
         Err(e) => {
             error!("{}", e.to_string());
