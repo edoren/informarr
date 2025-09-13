@@ -7,10 +7,14 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
-use log::{debug, error, info};
+use log::{debug, error, trace};
 use serde::{Deserialize, Serialize};
-use tokio::{fs, net::TcpListener, sync::mpsc};
-use tokio::{signal, sync::watch};
+use tokio::{
+    fs,
+    net::TcpListener,
+    signal,
+    sync::{mpsc, watch},
+};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
@@ -74,9 +78,14 @@ struct RadarrConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-struct AppConfig {
+struct JellyseerrConfig {
     url: String,
     api_key: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct AppConfig {
+    jellyseerr: JellyseerrConfig,
     discord: Option<DiscordConfig>,
     telegram: Option<TelegramConfig>,
     sonarr: Option<Vec<SonarrConfig>>,
@@ -84,7 +93,7 @@ struct AppConfig {
 }
 
 async fn logging_middleware(req: Request<Body>, next: Next) -> Response {
-    info!("Received a request to {}", req.uri());
+    trace!("Received a call to {}", req.uri());
     next.run(req).await
 }
 

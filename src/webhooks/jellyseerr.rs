@@ -1,17 +1,13 @@
 use std::collections::HashMap;
 
-use axum::Json;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use log::error;
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use log::{error, trace};
 use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use utoipa::ToSchema;
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::MessageResponse;
 
@@ -27,12 +23,13 @@ pub enum MediaType {
 #[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MediaStatus {
-    Unknown,
-    Pending,
-    Processing,
-    PartiallyAvailable,
     Available,
     Blacklisted,
+    Deleted,
+    PartiallyAvailable,
+    Pending,
+    Processing,
+    Unknown,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -210,12 +207,17 @@ pub fn router(
 )]
 async fn get_webhook(
     State((state, closer)): State<(mpsc::UnboundedSender<JellyseerrEvent>, watch::Sender<bool>)>,
-    json_str: String,
+    mut json: Json<Value>,
 ) -> impl IntoResponse {
-    let data = match serde_json::from_str::<JellyseerrEvent>(&json_str) {
+    let json_value = json.take();
+    trace!(
+        "Event JSON: {}",
+        serde_json::to_string(&json_value).unwrap_or("Error Parsing".to_string())
+    );
+    let data = match serde_json::from_value::<JellyseerrEvent>(json_value) {
         Ok(data) => data,
         Err(e) => {
-            error!("{e} - JSON: {}", json_str);
+            error!("{}", e.to_string());
             return (
                 StatusCode::BAD_REQUEST,
                 Json(MessageResponse::new(e.to_string())),
@@ -224,7 +226,6 @@ async fn get_webhook(
     };
     if let Err(e) = state.send(data) {
         error!("{}", e.to_string());
-        error!("JSON: {}", json_str);
         if let Err(e) = closer.send(true) {
             error!("Could not send close request: {e}");
         }

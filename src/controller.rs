@@ -1,17 +1,7 @@
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use bon::Builder;
-use log::{debug, error, info, trace, warn};
-use reqwest::Url;
-use serde_json::{Value, json};
-use serde_repr::{Deserialize_repr, Serialize_repr};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tokio::{
-    sync::{mpsc, watch},
-    time::Instant,
-};
-
 use jellyseerr::{
     apis::{
         Api as _, movies_api::MovieMovieIdGetParams, request_api::RequestRequestIdGetParams,
@@ -19,37 +9,25 @@ use jellyseerr::{
     },
     models::{JellyseerrMediaRequest, JellyseerrMovieDetails, JellyseerrTvDetails},
 };
+use log::{debug, error, info, trace, warn};
 use radarr::apis::Api as _;
+use reqwest::Url;
+use serde_json::{Value, json};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use sonarr::{
     apis::{Api as _, series_api::ApiV3SeriesIdGetParams},
     models::SonarrSeasonResource,
+};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use tokio::{
+    sync::{mpsc, watch},
+    time::Instant,
 };
 
 use crate::{
     AppConfig, DiscordConfig, RadarrConfig, SonarrConfig, TelegramConfig,
     webhooks::{self, jellyseerr::JellyseerrEvent, radarr::RadarrEvent, sonarr::SonarrEvent},
 };
-
-// use thiserror::Error;
-
-// #[derive(Error, Debug)]
-// pub enum WawaError {
-//     // #[error("data store disconnected")]
-//     // Disconnect(#[from] io::Error),
-//     #[error("execution failed: {0}")]
-//     ExecutionFailed(String),
-//     #[error("missing data error: {0}")]
-//     MissingData(String),
-//     #[error("yay: {0}")]
-//     YOLO(String),
-//     // #[error("invalid header (expected {expected:?}, found {found:?})")]
-//     // InvalidHeader {
-//     //     expected: String,
-//     //     found: String,
-//     // },
-//     // #[error("unknown data store error")]
-//     // Unknown,
-// }
 
 #[derive(Debug, Clone, Serialize_repr, Deserialize_repr)]
 #[repr(u64)]
@@ -193,7 +171,9 @@ impl NotificationController {
                 .to_string(),
         );
 
-        self.send_telegram_request(form, is_photo).await?;
+        self.send_telegram_request(form, is_photo)
+            .await
+            .map_err(|e| anyhow!("Failed sending telegram request: {e}"))?;
 
         Ok(())
     }
@@ -217,12 +197,17 @@ impl NotificationController {
         } else {
             format!("https://api.telegram.org/bot{}/sendMessage", bot_token)
         };
-        let response = client.post(&url).multipart(form).send().await?;
+        let response = client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .context("POST failed")?;
 
         // Check if the request was successful
         if !response.status().is_success() {
             error!(
-                "Failed to send photo: {:?} {:?}",
+                "Failed to send photo: {} {:?}",
                 response.status(),
                 response.text().await
             );
@@ -405,7 +390,9 @@ impl NotificationController {
             ]
         });
 
-        self.send_discord_request(message).await?;
+        if let Err(err) = self.send_discord_request(message).await {
+            error!("Failed sending Discord message: {err}");
+        }
 
         Ok(())
     }
@@ -425,15 +412,16 @@ impl NotificationController {
             .header("Content-Type", "application/json")
             .json(&data)
             .send()
-            .await?;
+            .await
+            .context("POST message failed")?;
 
         // Check if the request was successful
         if !response.status().is_success() {
-            error!(
-                "Failed to send message: {:?} {:?}",
+            return Err(anyhow!(
+                "Response status: {:?} {:?}",
                 response.status(),
                 response.json::<Value>().await
-            );
+            ));
         }
 
         Ok(())
@@ -452,14 +440,13 @@ struct RequestHandler {
 impl RequestHandler {
     async fn new(mut app_config: AppConfig) -> Result<Self> {
         let config = jellyseerr::apis::configuration::Configuration {
-            base_path: format!("{}/{}", app_config.url, "api/v1"),
+            base_path: app_config.jellyseerr.url + "/api/v1",
             api_key: Some(jellyseerr::apis::configuration::ApiKey {
                 prefix: None,
-                key: app_config.api_key,
+                key: app_config.jellyseerr.api_key,
             }),
             ..Default::default()
         };
-        app_config.url.clear();
         let jellyseerr_api = jellyseerr::apis::ApiClient::new(config.into());
 
         let convert_to_url = |use_ssl, host, port| {
@@ -587,7 +574,9 @@ impl RequestHandler {
                 )
                 .await
             {
-                self.process_request(media_request).await?;
+                self.process_request(media_request)
+                    .await
+                    .map_err(|e| anyhow!("Failed processing Jellyfin request: {e}"))?;
             }
         }
 
@@ -664,12 +653,7 @@ impl RequestHandler {
         let sonarr_monitored_seasons = sonarr_series
             .seasons
             .unwrap_or_default()
-            .ok_or(anyhow!(
-                "Could not find seasons for the specified Sonarr series"
-            ))?
-            .into_iter()
-            .filter(|season| season.monitored.unwrap_or(false))
-            .collect::<Vec<_>>();
+            .context("Could not find Sonarr series seasons not present")?;
 
         if sonarr_monitored_seasons.is_empty() {
             return Err(anyhow!("Could not find monitored Sonarr series seasons"));
@@ -748,12 +732,12 @@ impl RequestHandler {
             .iter()
             .min_by(|a, b| a.season_number.cmp(&b.season_number))
             .map(|v| *v)
-            .ok_or(anyhow!("Could not get first ongoing season"))?;
+            .context("Could not get first ongoing season")?;
         let first_requested_ongoing_season = ongoing_requested
             .iter()
             .min_by(|a, b| a.season_number.cmp(&b.season_number))
             .map(|v| *v)
-            .ok_or(anyhow!("Could not get first requested ongoing season"))?;
+            .context("Could not get first requested ongoing season")?;
 
         // Only send notifications when we confirm that the latest episode of the ongoing season has been downloaded
         let should_send_notification = sonarr_first_ongoing_season
@@ -769,19 +753,19 @@ impl RequestHandler {
 
         let last_episode_season = sonarr_first_ongoing_season
             .season_number
-            .ok_or(anyhow!("Could not get last episode season"))?;
+            .context("Could not get last episode season")?;
         let last_episode_number = sonarr_first_ongoing_season
             .statistics
             .as_ref()
             .and_then(|stats| stats.episode_count)
-            .ok_or(anyhow!("Could not get last episode number"))?;
+            .context("Could not get last episode number")?;
         let last_episode_air_date = sonarr_first_ongoing_season
             .statistics
             .as_ref()
             .and_then(|stats| stats.previous_airing.as_ref())
             .and_then(|prev_airing_opt| prev_airing_opt.as_deref())
             .and_then(|prev_airing| OffsetDateTime::parse(&prev_airing, &Rfc3339).ok())
-            .ok_or(anyhow!("Could not get last episode air date"))?;
+            .context("Could not get last episode air date")?;
 
         if last_episode_air_date > requested_show.created_at || last_episode_number == 1 {
             info!("Sending notification for single episode available");
@@ -934,33 +918,31 @@ impl RequestHandler {
         let media_type = media_request
             .r#type
             .as_ref()
-            .ok_or(anyhow!("Could not get media type"))?;
+            .context("Could not get media type")?;
         let media = media_request
             .media
             .as_ref()
-            .ok_or(anyhow!("Could not get media"))?;
+            .context("Could not get media")?;
 
         // if AVAILABLE
         if media.status.unwrap_or(0) == 5 {
             return Ok(());
         }
 
-        let tmdb_id = media
-            .tmdb_id
-            .ok_or(anyhow!("Could not get media tmdb_id"))?;
+        let tmdb_id = media.tmdb_id.context("Could not get media tmdb_id")?;
         let tvdb_id = media.tvdb_id.unwrap_or_default();
 
         let created_at = media_request
             .created_at
             .as_deref()
             .and_then(|date| OffsetDateTime::parse(&date, &Rfc3339).ok())
-            .ok_or(anyhow!("Could not get request creation time"))?;
+            .context("Could not get request creation time")?;
 
         let user_id = media_request
             .requested_by
             .as_ref()
             .map(|user| user.id)
-            .ok_or(anyhow!("Could not get user id"))?;
+            .context("Could not get user id")?;
 
         let user = self
             .jellyseerr_api
@@ -978,19 +960,23 @@ impl RequestHandler {
         //     .unwrap_or_default()
         //     .or_else(|| user.jellyfin_username.clone().unwrap_or_default())
         //     .or_else(|| user.plex_username.clone().unwrap_or_default())
-        //     .ok_or(anyhow!("username not set"))?;
+        //     .context("username not set")?;
         let display_name = user
             .display_name
             .clone()
             .or_else(|| user.username.clone().unwrap_or_default())
             .or_else(|| user.jellyfin_username.clone().unwrap_or_default())
             .or_else(|| user.plex_username.clone().unwrap_or_default())
-            .ok_or(anyhow!("Display name not set"))?;
-        let discord_id = user
-            .settings
-            .and_then(|settings| settings.discord_id.unwrap_or_default());
-
-        // let watch_url = media.media_url.as_ref().and_then(|v| Url::parse(v).ok());
+            .context("Display name not set")?;
+        let discord_id = user.settings.and_then(|settings| {
+            settings.notification_types.clone().and_then(|types| {
+                if types.discord.is_some_and(|v| v == 8.0) {
+                    settings.discord_id.unwrap_or_default()
+                } else {
+                    None
+                }
+            })
+        });
 
         if media_type == "tv" {
             let show = self
@@ -1051,11 +1037,11 @@ impl RequestHandler {
                         ))
                         .ok()
                     }),
-                    // watch_url: watch_url,
                     seasons: Some(requested_seasons),
                 };
 
-                trace!("Request added: {:?}", processed_request);
+                info!("Request Added: {}", processed_request.media.title);
+                debug!("{:?}", processed_request);
                 self.requested.push(processed_request);
             }
         } else if media_type == "movie" {
@@ -1087,11 +1073,11 @@ impl RequestHandler {
                     ))
                     .ok()
                 }),
-                // watch_url: watch_url,
                 seasons: None,
             };
 
-            trace!("Request added: {:?}", processed_request);
+            info!("Request Added: {}", processed_request.media.title);
+            debug!("{:?}", processed_request);
             self.requested.push(processed_request);
         }
 

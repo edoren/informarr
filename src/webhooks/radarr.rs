@@ -1,13 +1,10 @@
-use axum::Json;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use log::error;
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use log::{error, trace};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use utoipa::ToSchema;
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::MessageResponse;
 
@@ -104,7 +101,7 @@ pub struct MovieFile {
     pub quality_version: Option<i32>,
     pub relative_path: String,
     pub release_group: Option<String>,
-    pub scene_name: String,
+    pub scene_name: Option<String>,
     pub size: i64,
     pub source_path: Option<String>,
 }
@@ -253,7 +250,7 @@ pub struct ManualInteractionRequiredEvent {
     pub download_status_message: Option<Vec<DownloadStatusMessage>>,
     pub download_status: Option<String>,
     pub instance_name: String,
-    pub movie: Movie,
+    pub movie: Option<Movie>,
     pub release: Release,
 }
 
@@ -325,12 +322,17 @@ pub fn router(
 )]
 async fn get_webhook(
     State((state, closer)): State<(mpsc::UnboundedSender<RadarrEvent>, watch::Sender<bool>)>,
-    json_str: String,
+    mut json: Json<Value>,
 ) -> impl IntoResponse {
-    let data = match serde_json::from_str::<RadarrEvent>(&json_str) {
+    let json_value = json.take();
+    trace!(
+        "Event JSON: {}",
+        serde_json::to_string(&json_value).unwrap_or("Error Parsing".to_string())
+    );
+    let data = match serde_json::from_value::<RadarrEvent>(json_value.clone()) {
         Ok(data) => data,
         Err(e) => {
-            error!("{e} - JSON: {}", json_str);
+            error!("{}", e.to_string());
             return (
                 StatusCode::BAD_REQUEST,
                 Json(MessageResponse::new(e.to_string())),
@@ -339,7 +341,6 @@ async fn get_webhook(
     };
     if let Err(e) = state.send(data) {
         error!("{}", e.to_string());
-        error!("JSON: {}", json_str);
         if let Err(e) = closer.send(true) {
             error!("Could not send close request: {e}");
         }
