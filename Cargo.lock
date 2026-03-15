@@ -437,6 +437,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "edolib"
 version = "0.1.0"
+source = "git+https://github.com/edoren/edolib-rs.git#cfa51578fec81a4a14191ddebcfe2b1db149bd24"
 dependencies = [
  "dirs",
  "thiserror",
