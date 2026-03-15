@@ -52,14 +52,14 @@ components:
       type: object
       properties:
         tmdbId:
-          type: number
+          type: integer
           example: 1
         title:
           type: string
         media:
           $ref: '#/components/schemas/MediaInfo'
         userId:
-          type: number
+          type: integer
           example: 1
     Watchlist:
       type: object
@@ -69,7 +69,7 @@ components:
           example: 1
           readOnly: true
         tmdbId:
-          type: number
+          type: integer
           example: 1
         ratingKey:
           type: string
@@ -102,15 +102,26 @@ components:
           readOnly: true
         username:
           type: string
+          nullable: true
+        displayName:
+          type: string
+          readOnly: true
         plexUsername:
           type: string
           readOnly: true
+          nullable: true
         plexToken:
           type: string
           readOnly: true
+          nullable: true
+        jellyfinUsername:
+          type: string
+          readOnly: true
+          nullable: true
         jellyfinAuthToken:
           type: string
           readOnly: true
+          nullable: true
         userType:
           type: integer
           example: 1
@@ -133,6 +144,9 @@ components:
           type: number
           example: 5
           readOnly: true
+        settings:
+          $ref: '#/components/schemas/UserSettings'
+          nullable: true
       required:
         - id
         - email
@@ -218,6 +232,8 @@ components:
           nullable: true
           description: 'Enable watchlist sync for TV'
           example: false
+        notificationTypes:
+          $ref: '#/components/schemas/NotificationAgentTypes'
     MainSettings:
       type: object
       properties:
@@ -1225,6 +1241,30 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WatchProviders'
+    MediaSeason:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123
+          readOnly: true
+        seasonNumber:
+          type: integer
+          example: 1
+        status:
+          type: integer
+          example: 1
+        status4k:
+          type: integer
+          example: 1
+        createdAt:
+          type: string
+          example: '2020-09-12T10:00:27.000Z'
+          readOnly: true
+        updatedAt:
+          type: string
+          example: '2020-09-12T10:00:27.000Z'
+          readOnly: true
     MediaRequest:
       type: object
       properties:
@@ -1237,8 +1277,15 @@ components:
           example: 0
           description: Status of the request. 1 = PENDING APPROVAL, 2 = APPROVED, 3 = DECLINED
           readOnly: true
+        type:
+          type: string
+          readOnly: true
         media:
           $ref: '#/components/schemas/MediaInfo'
+        seasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaSeason'
         createdAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
@@ -1270,17 +1317,17 @@ components:
       type: object
       properties:
         id:
-          type: number
+          type: integer
           readOnly: true
         tmdbId:
-          type: number
+          type: integer
           readOnly: true
         tvdbId:
-          type: number
+          type: integer
           readOnly: true
           nullable: true
         status:
-          type: number
+          type: integer
           example: 0
           description: Availability of the media. 1 = `UNKNOWN`, 2 = `PENDING`, 3 = `PROCESSING`, 4 = `PARTIALLY_AVAILABLE`, 5 = `AVAILABLE`, 6 = `DELETED`
         requests:
@@ -1288,6 +1335,10 @@ components:
           readOnly: true
           items:
             $ref: '#/components/schemas/MediaRequest'
+        seasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/MediaSeason'
         createdAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
@@ -4298,7 +4349,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User web push notification settings in JSON
@@ -4327,7 +4378,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
         - in: path
           name: endpoint
           required: true
@@ -4359,7 +4410,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
         - in: path
           name: endpoint
           required: true
@@ -4380,7 +4431,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: Users details in JSON
@@ -4401,7 +4452,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -4425,7 +4476,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User successfully deleted
@@ -4445,7 +4496,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
         - in: query
           name: take
           schema:
@@ -4484,7 +4535,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User quota details in JSON
@@ -4590,7 +4641,7 @@ paths:
                           type: string
                           example: Dune
                         tmdbId:
-                          type: number
+                          type: integer
                           example: 438631
     post:
       summary: Add media to blocklist
@@ -4701,7 +4752,7 @@ paths:
                           type: string
                           example: Dune
                         tmdbId:
-                          type: number
+                          type: integer
                           example: 438631
     post:
       summary: Add media to blocklist
@@ -4806,11 +4857,11 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
         - in: query
           name: page
           schema:
-            type: number
+            type: integer
             example: 1
             default: 1
       responses:
@@ -4852,7 +4903,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User general settings returned
@@ -4870,7 +4921,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -4895,7 +4946,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User password page information returned
@@ -4917,7 +4968,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -4946,7 +4997,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -4975,7 +5026,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '204':
           description: Unlinking account succeeded
@@ -4994,7 +5045,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -5025,7 +5076,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '204':
           description: Unlinking account succeeded
@@ -5044,7 +5095,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User notification settings returned
@@ -5062,7 +5113,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -5087,7 +5138,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: User permission settings returned
@@ -5109,7 +5160,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       requestBody:
         required: true
         content:
@@ -5146,7 +5197,7 @@ paths:
           name: userId
           required: true
           schema:
-            type: number
+            type: integer
       responses:
         '200':
           description: Users
@@ -6146,7 +6197,7 @@ paths:
                       type: object
                       properties:
                         tmdbId:
-                          type: number
+                          type: integer
                           example: 1
                         ratingKey:
                           type: string
@@ -6278,7 +6329,7 @@ paths:
                 languageProfileId:
                   type: number
                 userId:
-                  type: number
+                  type: integer
                   nullable: true
               required:
                 - mediaType
@@ -6384,7 +6435,7 @@ paths:
                 languageProfileId:
                   type: number
                 userId:
-                  type: number
+                  type: integer
                   nullable: true
               required:
                 - mediaType
@@ -7227,7 +7278,7 @@ paths:
           name: tmdbId
           required: true
           schema:
-            type: number
+            type: integer
             example: 0
       responses:
         '200':

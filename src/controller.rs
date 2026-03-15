@@ -2,16 +2,16 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use bon::Builder;
-use jellyseerr::{
+use log::{debug, error, info, trace, warn};
+use radarr::apis::Api as _;
+use reqwest::Url;
+use seerr::{
     apis::{
         Api as _, movies_api::MovieMovieIdGetParams, request_api::RequestRequestIdGetParams,
         tv_api::TvTvIdGetParams, users_api::UserUserIdGetParams,
     },
-    models::{JellyseerrMediaRequest, JellyseerrMovieDetails, JellyseerrTvDetails},
+    models::{SeerrMediaRequest, SeerrMovieDetails, SeerrTvDetails},
 };
-use log::{debug, error, info, trace, warn};
-use radarr::apis::Api as _;
-use reqwest::Url;
 use serde_json::{Value, json};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use sonarr::{
@@ -26,7 +26,7 @@ use tokio::{
 
 use crate::{
     AppConfig, DiscordConfig, RadarrConfig, SonarrConfig, TelegramConfig,
-    webhooks::{self, jellyseerr::JellyseerrEvent, radarr::RadarrEvent, sonarr::SonarrEvent},
+    webhooks::{self, radarr::RadarrEvent, seerr::SeerrEvent, sonarr::SonarrEvent},
 };
 
 #[derive(Debug, Clone, Serialize_repr, Deserialize_repr)]
@@ -235,14 +235,14 @@ impl NotificationController {
 
         // let status;
         // (color, status) = match payload.notification_type {
-        //     jellyseerr::NotificationType::MediaPending => (EmbedColors::Orange, "Pending Approval"),
-        //     jellyseerr::NotificationType::MediaApproved
-        //     | jellyseerr::NotificationType::MediaAutoApproved => {
+        //     seerr::NotificationType::MediaPending => (EmbedColors::Orange, "Pending Approval"),
+        //     seerr::NotificationType::MediaApproved
+        //     | seerr::NotificationType::MediaAutoApproved => {
         //         (EmbedColors::Purple, "Processing")
         //     }
-        //     jellyseerr::NotificationType::MediaAvailable => (EmbedColors::Green, "Available"),
-        //     jellyseerr::NotificationType::MediaDeclined => (EmbedColors::Red, "Declined"),
-        //     jellyseerr::NotificationType::MediaFailed => (EmbedColors::Red, "Failed"),
+        //     seerr::NotificationType::MediaAvailable => (EmbedColors::Green, "Available"),
+        //     seerr::NotificationType::MediaDeclined => (EmbedColors::Red, "Declined"),
+        //     seerr::NotificationType::MediaFailed => (EmbedColors::Red, "Failed"),
         //     _ => (color, ""),
         // };
 
@@ -272,16 +272,16 @@ impl NotificationController {
         //         },
         //         {
         //             "name": "Issue Status",
-        //             "value": if issue.issue_status == jellyseerr::IssueStatus::Open { "Open" } else { "Resolved" },
+        //             "value": if issue.issue_status == seerr::IssueStatus::Open { "Open" } else { "Resolved" },
         //             "inline": true,
         //         }
         //     ]));
 
         //     color = match payload.notification_type {
-        //         jellyseerr::NotificationType::IssueCreated
-        //         | jellyseerr::NotificationType::IssueReopened => EmbedColors::Red,
-        //         jellyseerr::NotificationType::IssueComment => EmbedColors::Orange,
-        //         jellyseerr::NotificationType::IssueResolved => EmbedColors::Green,
+        //         seerr::NotificationType::IssueCreated
+        //         | seerr::NotificationType::IssueReopened => EmbedColors::Red,
+        //         seerr::NotificationType::IssueComment => EmbedColors::Orange,
+        //         seerr::NotificationType::IssueResolved => EmbedColors::Green,
         //         _ => color,
         //     };
         // }
@@ -407,7 +407,7 @@ impl NotificationController {
         let client = reqwest::Client::new();
 
         // Send the message via the Webhook URL using a POST request
-        let response = client
+        let response: reqwest::Response = client
             .post(webhook_url)
             .header("Content-Type", "application/json")
             .json(&data)
@@ -429,25 +429,25 @@ impl NotificationController {
 }
 
 struct RequestHandler {
-    jellyseerr_api: jellyseerr::apis::ApiClient,
+    seerr_api: seerr::apis::ApiClient,
     sonarr_apis: Vec<sonarr::apis::ApiClient>,
     // radarr_apis: Vec<radarr::apis::ApiClient>,
     requested: Vec<MediaRequest>,
-    // users: HashMap<i32, Arc<JellyseerrUser>>,
+    // users: HashMap<i32, Arc<SeerrUser>>,
     notifier: NotificationController,
 }
 
 impl RequestHandler {
     async fn new(mut app_config: AppConfig) -> Result<Self> {
-        let config = jellyseerr::apis::configuration::Configuration {
-            base_path: app_config.jellyseerr.url + "/api/v1",
-            api_key: Some(jellyseerr::apis::configuration::ApiKey {
+        let config = seerr::apis::configuration::Configuration {
+            base_path: app_config.seerr.url + "/api/v1",
+            api_key: Some(seerr::apis::configuration::ApiKey {
                 prefix: None,
-                key: app_config.jellyseerr.api_key,
+                key: app_config.seerr.api_key,
             }),
             ..Default::default()
         };
-        let jellyseerr_api = jellyseerr::apis::ApiClient::new(config.into());
+        let seerr_api = seerr::apis::ApiClient::new(config.into());
 
         let convert_to_url = |use_ssl, host, port| {
             format!(
@@ -461,7 +461,7 @@ impl RequestHandler {
         let sonarr_settings = if let Some(config) = app_config.sonarr.take() {
             config
         } else {
-            jellyseerr_api
+            seerr_api
                 .settings_api()
                 .settings_sonarr_get()
                 .await
@@ -476,7 +476,7 @@ impl RequestHandler {
         let radarr_settings = if let Some(config) = app_config.radarr.take() {
             config
         } else {
-            jellyseerr_api
+            seerr_api
                 .settings_api()
                 .settings_radarr_get()
                 .await
@@ -539,7 +539,7 @@ impl RequestHandler {
         }
 
         let mut instance = Self {
-            jellyseerr_api,
+            seerr_api,
             sonarr_apis,
             // radarr_apis,
             requested: Vec::new(),
@@ -555,9 +555,9 @@ impl RequestHandler {
         Ok(instance)
     }
 
-    async fn process_jellyseerr(&mut self, event: JellyseerrEvent) -> Result<()> {
-        if event.notification_type == webhooks::jellyseerr::NotificationType::MediaApproved
-            || event.notification_type == webhooks::jellyseerr::NotificationType::MediaAutoApproved
+    async fn process_seerr(&mut self, event: SeerrEvent) -> Result<()> {
+        if event.notification_type == webhooks::seerr::NotificationType::MediaApproved
+            || event.notification_type == webhooks::seerr::NotificationType::MediaAutoApproved
         {
             let request_id = match event.request {
                 Some(request) => request.request_id,
@@ -565,7 +565,7 @@ impl RequestHandler {
             };
 
             if let Ok(media_request) = self
-                .jellyseerr_api
+                .seerr_api
                 .request_api()
                 .request_request_id_get(
                     RequestRequestIdGetParams::builder()
@@ -854,8 +854,8 @@ impl RequestHandler {
             || media_1.tvdb_id.is_some_and(|v| Some(v) == media_2.tvdb_id)
     }
 
-    async fn get_movie_by_id(&self, tmdb_id: i32) -> Result<JellyseerrMovieDetails> {
-        self.jellyseerr_api
+    async fn get_movie_by_id(&self, tmdb_id: i32) -> Result<SeerrMovieDetails> {
+        self.seerr_api
             .movies_api()
             .movie_movie_id_get(
                 MovieMovieIdGetParams::builder()
@@ -866,8 +866,8 @@ impl RequestHandler {
             .map_err(|e| anyhow!("Could not get movie with id {tmdb_id}: {e}"))
     }
 
-    async fn get_show_by_id(&self, tmdb_id: i32) -> Result<JellyseerrTvDetails> {
-        self.jellyseerr_api
+    async fn get_show_by_id(&self, tmdb_id: i32) -> Result<SeerrTvDetails> {
+        self.seerr_api
             .tv_api()
             .tv_tv_id_get(TvTvIdGetParams::builder().tv_id(tmdb_id as f64).build())
             .await
@@ -878,7 +878,7 @@ impl RequestHandler {
         self.requested.clear();
 
         let num_requests = self
-            .jellyseerr_api
+            .seerr_api
             .request_api()
             .request_count_get()
             .await?
@@ -890,10 +890,10 @@ impl RequestHandler {
 
         while offset < num_requests {
             let requests = self
-                .jellyseerr_api
+                .seerr_api
                 .request_api()
                 .request_get(
-                    jellyseerr::apis::request_api::RequestGetParams::builder()
+                    seerr::apis::request_api::RequestGetParams::builder()
                         .take(batch_size as f64)
                         .skip(offset as f64)
                         .filter("approved".into())
@@ -913,7 +913,7 @@ impl RequestHandler {
         Ok(())
     }
 
-    async fn process_request(&mut self, media_request: JellyseerrMediaRequest) -> Result<()> {
+    async fn process_request(&mut self, media_request: SeerrMediaRequest) -> Result<()> {
         trace!("Processing request: {:?}", media_request);
         let media_type = media_request
             .r#type
@@ -945,28 +945,18 @@ impl RequestHandler {
             .context("Could not get user id")?;
 
         let user = self
-            .jellyseerr_api
+            .seerr_api
             .users_api()
-            .user_user_id_get(
-                UserUserIdGetParams::builder()
-                    .user_id(user_id as f64)
-                    .build(),
-            )
+            .user_user_id_get(UserUserIdGetParams::builder().user_id(user_id).build())
             .await
             .map_err(|e| anyhow!("Could not get user with id {user_id}: {e}"))?;
-        // let username = user
-        //     .username
-        //     .clone()
-        //     .unwrap_or_default()
-        //     .or_else(|| user.jellyfin_username.clone().unwrap_or_default())
-        //     .or_else(|| user.plex_username.clone().unwrap_or_default())
-        //     .context("username not set")?;
+
         let display_name = user
             .display_name
+            .or_else(|| user.username.flatten())
+            .or_else(|| user.jellyfin_username.flatten())
+            .or_else(|| user.plex_username.flatten())
             .clone()
-            .or_else(|| user.username.clone().unwrap_or_default())
-            .or_else(|| user.jellyfin_username.clone().unwrap_or_default())
-            .or_else(|| user.plex_username.clone().unwrap_or_default())
             .context("Display name not set")?;
         let discord_id = user.settings.and_then(|settings| {
             settings.notification_types.clone().and_then(|types| {
@@ -982,7 +972,7 @@ impl RequestHandler {
             let show = self
                 .get_show_by_id(tmdb_id)
                 .await
-                .map_err(|e| anyhow!("Could not get show from Jellyseerr: {e}"))?;
+                .map_err(|e| anyhow!("Could not get show from Seerr: {e}"))?;
 
             let requested_seasons = media_request
                 .seasons
@@ -1048,7 +1038,7 @@ impl RequestHandler {
             let movie = self
                 .get_movie_by_id(tmdb_id)
                 .await
-                .map_err(|e| anyhow!("Could not get show from Jellyseerr: {e}"))?;
+                .map_err(|e| anyhow!("Could not get show from Seerr: {e}"))?;
 
             let processed_request = MediaRequest {
                 r#type: MediaType::MOVIE,
@@ -1124,7 +1114,7 @@ pub async fn run(
     app_config: AppConfig,
     mut sonarr_rx: mpsc::UnboundedReceiver<SonarrEvent>,
     mut radarr_rx: mpsc::UnboundedReceiver<RadarrEvent>,
-    mut jellyseerr_rx: mpsc::UnboundedReceiver<JellyseerrEvent>,
+    mut seerr_rx: mpsc::UnboundedReceiver<SeerrEvent>,
     close_tx: watch::Sender<bool>,
     mut close_rx: watch::Receiver<bool>,
 ) -> Result<()> {
@@ -1155,11 +1145,11 @@ pub async fn run(
                     error!("Failed processing Radarr event: {e}");
                 }
             },
-            Some(event) = jellyseerr_rx.recv() => {
-                info!("Processing Jellyseerr event: {}", event.notification_type);
-                debug!("Received from Jellyseerr: {}", serde_json::to_string(&event).unwrap_or_default());
-                if let Err(e) = request_handler.process_jellyseerr(event).await {
-                    error!("Failed processing Jellyseerr event: {e}");
+            Some(event) = seerr_rx.recv() => {
+                info!("Processing Seerr event: {}", event.notification_type);
+                debug!("Received from Seerr: {}", serde_json::to_string(&event).unwrap_or_default());
+                if let Err(e) = request_handler.process_seerr(event).await {
+                    error!("Failed processing Seerr event: {e}");
                 }
             }
             _ = tokio::time::sleep_until(next_scan_requests.into()) => {

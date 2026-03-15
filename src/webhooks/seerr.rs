@@ -11,7 +11,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::MessageResponse;
 
-pub const TAG: &str = "jellyseerr";
+pub const TAG: &str = "seerr";
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -171,7 +171,7 @@ impl std::fmt::Display for NotificationType {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct JellyseerrEvent {
+pub struct SeerrEvent {
     pub notification_type: NotificationType,
     pub event: String,
     pub subject: String,
@@ -185,7 +185,7 @@ pub struct JellyseerrEvent {
 }
 
 pub fn router(
-    sender: mpsc::UnboundedSender<JellyseerrEvent>,
+    sender: mpsc::UnboundedSender<SeerrEvent>,
     closer: watch::Sender<bool>,
 ) -> OpenApiRouter {
     OpenApiRouter::new()
@@ -195,9 +195,9 @@ pub fn router(
 
 #[utoipa::path(
     post,
-    operation_id = "jellyseerr_webhook",
+    operation_id = "seerr_webhook",
     path = "/v2/webhook",
-    request_body(content = JellyseerrEvent, content_type = "application/json"),
+    request_body(content = SeerrEvent, content_type = "application/json"),
     responses(
         (status = StatusCode::OK, description = "Webhook received", body = MessageResponse),
         (status = StatusCode::BAD_REQUEST, description = "Bad request", body = MessageResponse),
@@ -206,11 +206,11 @@ pub fn router(
     tag  = TAG
 )]
 async fn get_webhook(
-    State((state, closer)): State<(mpsc::UnboundedSender<JellyseerrEvent>, watch::Sender<bool>)>,
+    State((state, closer)): State<(mpsc::UnboundedSender<SeerrEvent>, watch::Sender<bool>)>,
     json_str: String,
 ) -> impl IntoResponse {
     trace!("Event JSON: {}", json_str);
-    let data = match serde_json::from_str::<JellyseerrEvent>(&json_str) {
+    let data = match serde_json::from_str::<SeerrEvent>(&json_str) {
         Ok(data) => data,
         Err(e) => {
             error!("{}", e.to_string());

@@ -29,7 +29,7 @@ mod webhooks;
     tags(
         (name = webhooks::sonarr::TAG, description = "Sonarr API endpoints"),
         (name = webhooks::radarr::TAG, description = "Radarr API endpoints"),
-        (name = webhooks::jellyseerr::TAG, description = "Jellyseerr API endpoints")
+        (name = webhooks::seerr::TAG, description = "Seerr API endpoints")
     )
 )]
 struct ApiDoc;
@@ -78,14 +78,14 @@ struct RadarrConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-struct JellyseerrConfig {
+struct SeerrConfig {
     url: String,
     api_key: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct AppConfig {
-    jellyseerr: JellyseerrConfig,
+    seerr: SeerrConfig,
     discord: Option<DiscordConfig>,
     telegram: Option<TelegramConfig>,
     sonarr: Option<Vec<SonarrConfig>>,
@@ -162,14 +162,14 @@ async fn main() -> Result<()> {
 
     let (sonarr_tx, sonarr_rx) = mpsc::unbounded_channel();
     let (radarr_tx, radarr_rx) = mpsc::unbounded_channel();
-    let (jellyseerr_tx, jellyseerr_rx) = mpsc::unbounded_channel();
+    let (seerr_tx, seerr_rx) = mpsc::unbounded_channel();
     let (close_tx, close_rx) = watch::channel(false);
 
     let worker = tokio::spawn(controller::run(
         app_config,
         sonarr_rx,
         radarr_rx,
-        jellyseerr_rx,
+        seerr_rx,
         close_tx.clone(),
         close_rx.clone(),
     ));
@@ -184,8 +184,8 @@ async fn main() -> Result<()> {
             webhooks::radarr::router(radarr_tx, close_tx.clone()),
         )
         .nest(
-            "/api/v1/jellyseerr",
-            webhooks::jellyseerr::router(jellyseerr_tx, close_tx.clone()),
+            "/api/v1/seerr",
+            webhooks::seerr::router(seerr_tx, close_tx.clone()),
         )
         .layer(middleware::from_fn(logging_middleware))
         .split_for_parts();

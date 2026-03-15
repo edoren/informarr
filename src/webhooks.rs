@@ -1,3 +1,3 @@
-pub mod jellyseerr;
+pub mod seerr;
 pub mod radarr;
 pub mod sonarr;

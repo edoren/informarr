@@ -8,9 +8,9 @@ anyhow = "1.0"
 axum = "0.8"
 edolib = { git = "https://github.com/edoren/edolib-rs.git" }
 log = "0.4"
-jellyseerr = { path = "./openapi_generated/jellyseerr", features = ["bon"] }
+seerr = { path = "./openapi_generated/seerr", features = ["bon"] }
 radarr = { path = "./openapi_generated/radarr", features = ["bon"] }
-reqwest = { version = "0.12", features = ["multipart"] }
+reqwest = { version = "0.12", features = ["multipart", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde-aux = "4.6"
