@@ -3,3 +3,4 @@
 /openapi_generated
 
 /config.y*ml
+/.cargo/config.toml
