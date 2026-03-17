@@ -19,6 +19,9 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::config::AppConfig;
+
+mod config;
 mod controller;
 mod models;
 mod schema;
@@ -49,47 +52,6 @@ impl MessageResponse {
             message: "ok".to_string(),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct DiscordConfig {
-    username: Option<String>,
-    avatar_url: Option<String>,
-    webhook_url: String,
-    color: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct TelegramConfig {
-    bot_token: String,
-    chat_id: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct SonarrConfig {
-    url: String,
-    api_key: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct RadarrConfig {
-    url: String,
-    api_key: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct SeerrConfig {
-    url: String,
-    api_key: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct AppConfig {
-    seerr: SeerrConfig,
-    discord: Option<DiscordConfig>,
-    telegram: Option<TelegramConfig>,
-    sonarr: Option<Vec<SonarrConfig>>,
-    radarr: Option<Vec<RadarrConfig>>,
 }
 
 async fn logging_middleware(req: Request<Body>, next: Next) -> Response {

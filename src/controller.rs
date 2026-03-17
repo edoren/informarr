@@ -25,7 +25,7 @@ use tokio::{
 };
 
 use crate::{
-    AppConfig, DiscordConfig, RadarrConfig, SonarrConfig, TelegramConfig,
+    config::{AppConfig, DiscordConfig, RadarrConfig, SonarrConfig, TelegramConfig},
     webhooks::{self, radarr::RadarrEvent, seerr::SeerrEvent, sonarr::SonarrEvent},
 };
 
