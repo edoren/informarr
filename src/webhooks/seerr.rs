@@ -1,26 +1,29 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use log::{error, trace};
 use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
 use serde_json::Value;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Mutex, mpsc};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::MessageResponse;
+use crate::{
+    MessageResponse,
+    webhooks::{WebhookEmitter, WebhookListener},
+};
 
 pub const TAG: &str = "seerr";
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaType {
     TV,
     Movie,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MediaStatus {
     Available,
@@ -32,7 +35,7 @@ pub enum MediaStatus {
     Unknown,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct Media {
     pub media_type: String,
     #[serde(
@@ -49,7 +52,7 @@ pub struct Media {
     pub status4k: MediaStatus,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct Request {
     pub request_id: String,
     #[serde(rename = "requestedBy_email")]
@@ -64,7 +67,7 @@ pub struct Request {
     pub requested_by_settings_telegram_chat_id: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum IssueType {
     Video,
@@ -84,14 +87,14 @@ pub enum IssueType {
 //     }
 // }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum IssueStatus {
     Open,
     Resolved,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct Issue {
     pub issue_id: String,
     pub issue_type: IssueType,
@@ -108,7 +111,7 @@ pub struct Issue {
     pub reported_by_settings_telegram_chat_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct Comment {
     pub comment_message: String,
     #[serde(rename = "commentedBy_email")]
@@ -123,7 +126,7 @@ pub struct Comment {
     pub commented_by_settings_telegram_chat_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ExtraData {
     pub name: String,
     pub value: String,
@@ -131,7 +134,7 @@ pub struct ExtraData {
     extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NotificationType {
     None,
@@ -170,7 +173,7 @@ impl std::fmt::Display for NotificationType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct SeerrEvent {
     pub notification_type: NotificationType,
     pub event: String,
@@ -184,13 +187,8 @@ pub struct SeerrEvent {
     pub extra: Vec<ExtraData>,
 }
 
-pub fn router(
-    sender: mpsc::UnboundedSender<SeerrEvent>,
-    closer: watch::Sender<bool>,
-) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(get_webhook))
-        .with_state((sender, closer))
+pub struct SeerrWebhook {
+    listeners: Mutex<Vec<mpsc::UnboundedSender<SeerrEvent>>>,
 }
 
 #[utoipa::path(
@@ -206,7 +204,7 @@ pub fn router(
     tag  = TAG
 )]
 async fn get_webhook(
-    State((state, closer)): State<(mpsc::UnboundedSender<SeerrEvent>, watch::Sender<bool>)>,
+    State(webhook): State<Arc<SeerrWebhook>>,
     json_str: String,
 ) -> impl IntoResponse {
     trace!("Event JSON: {}", json_str);
@@ -220,15 +218,42 @@ async fn get_webhook(
             );
         }
     };
-    if let Err(e) = state.send(data) {
-        error!("{}", e.to_string());
-        if let Err(e) = closer.send(true) {
-            error!("Could not send close request: {e}");
-        }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(MessageResponse::new(e.to_string())),
-        );
-    };
+    webhook.emit(&data);
     (StatusCode::OK, Json(MessageResponse::ok()))
+}
+
+impl SeerrWebhook {
+    pub fn new() -> Arc<Self> {
+        Arc::new(SeerrWebhook { listeners: Mutex::new(vec![]) })
+    }
+
+    pub fn router(self: Arc<Self>) -> OpenApiRouter {
+        OpenApiRouter::new()
+            .routes(routes!(get_webhook))
+            .with_state(self)
+    }
+}
+
+impl WebhookListener for SeerrWebhook {
+    type Event = SeerrEvent;
+
+    fn add_listener(&self, listener: impl Fn(SeerrEvent) + Send + 'static) {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        self.listeners.blocking_lock().push(tx);
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                listener(event);
+            }
+        });
+    }
+}
+
+impl WebhookEmitter for SeerrWebhook {
+    type Event = SeerrEvent;
+
+    fn emit(&self, event: &SeerrEvent) {
+        for tx in self.listeners.blocking_lock().iter() {
+            let _ = tx.send(event.clone());
+        }
+    }
 }

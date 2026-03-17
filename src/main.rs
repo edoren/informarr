@@ -19,7 +19,12 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::config::AppConfig;
+use crate::{
+    config::AppConfig,
+    webhooks::{
+        WebhookListener, radarr::RadarrWebhook, seerr::SeerrWebhook, sonarr::SonarrWebhook,
+    },
+};
 
 mod config;
 mod controller;
@@ -127,6 +132,21 @@ async fn main() -> Result<()> {
     let (seerr_tx, seerr_rx) = mpsc::unbounded_channel();
     let (close_tx, close_rx) = watch::channel(false);
 
+    let sonarr_webhook = SonarrWebhook::new();
+    sonarr_webhook.add_listener(move |event| {
+        let _ = sonarr_tx.send(event);
+    });
+
+    let radarr_webhook = RadarrWebhook::new();
+    radarr_webhook.add_listener(move |event| {
+        let _ = radarr_tx.send(event);
+    });
+
+    let seerr_webhook = SeerrWebhook::new();
+    seerr_webhook.add_listener(move |event| {
+        let _ = seerr_tx.send(event);
+    });
+
     let worker = tokio::spawn(controller::run(
         app_config,
         sonarr_rx,
@@ -137,18 +157,9 @@ async fn main() -> Result<()> {
     ));
 
     let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .nest(
-            "/api/v1/sonarr",
-            webhooks::sonarr::router(sonarr_tx, close_tx.clone()),
-        )
-        .nest(
-            "/api/v1/radarr",
-            webhooks::radarr::router(radarr_tx, close_tx.clone()),
-        )
-        .nest(
-            "/api/v1/seerr",
-            webhooks::seerr::router(seerr_tx, close_tx.clone()),
-        )
+        .nest("/api/v1/sonarr", sonarr_webhook.router())
+        .nest("/api/v1/radarr", radarr_webhook.router())
+        .nest("/api/v1/seerr", seerr_webhook.router())
         .layer(middleware::from_fn(logging_middleware))
         .split_for_parts();
 

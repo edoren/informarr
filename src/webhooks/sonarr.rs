@@ -1,15 +1,20 @@
+use std::sync::Arc;
+
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use log::{error, trace};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Mutex, mpsc};
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::MessageResponse;
+use crate::{
+    MessageResponse,
+    webhooks::{WebhookEmitter, WebhookListener},
+};
 
 pub const TAG: &str = "sonarr";
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesImage {
     pub cover_type: String,
@@ -17,14 +22,14 @@ pub struct SeriesImage {
     pub url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Language {
     pub id: i32,
     pub name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Series {
     pub genres: Option<Vec<String>>,
@@ -43,7 +48,7 @@ pub struct Series {
     pub year: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Episode {
     pub episode_number: i32,
@@ -57,21 +62,21 @@ pub struct Episode {
     pub overview: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomFormat {
     pub id: i32,
     pub name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomFormatInfo {
     pub custom_format_score: i32,
     pub custom_formats: Vec<CustomFormat>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadClientItem {
     pub quality: String,
@@ -80,14 +85,14 @@ pub struct DownloadClientItem {
     pub title: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadStatusMessage {
     pub title: String,
     pub messages: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Release {
     pub custom_format_score: Option<i32>,
@@ -103,7 +108,7 @@ pub struct Release {
     pub release_type: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaInfo {
     pub audio_channels: f32,
@@ -117,7 +122,7 @@ pub struct MediaInfo {
     pub width: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EpisodeFile {
     pub date_added: String,
@@ -134,14 +139,14 @@ pub struct EpisodeFile {
     pub source_path: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RenamedEpisodeFile {
     pub previous_relative_path: String,
     pub previous_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TestEvent {
     pub application_url: String,
@@ -150,7 +155,7 @@ pub struct TestEvent {
     pub episodes: Vec<Episode>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GrabEvent {
     pub application_url: String,
@@ -164,7 +169,7 @@ pub struct GrabEvent {
     pub release: Release,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadEvent {
     pub application_url: String,
@@ -186,7 +191,7 @@ pub struct DownloadEvent {
     pub source_path: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EpisodeFileDeleteEvent {
     pub application_url: String,
@@ -197,7 +202,7 @@ pub struct EpisodeFileDeleteEvent {
     pub series: Series,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesAddEvent {
     pub application_url: String,
@@ -205,7 +210,7 @@ pub struct SeriesAddEvent {
     pub series: Series,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesDeleteEvent {
     pub application_url: String,
@@ -214,7 +219,7 @@ pub struct SeriesDeleteEvent {
     pub deleted_files: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameEvent {
     pub application_url: String,
@@ -223,7 +228,7 @@ pub struct RenameEvent {
     pub renamed_episode_files: Vec<RenamedEpisodeFile>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthEvent {
     pub instance_name: String,
@@ -233,7 +238,7 @@ pub struct HealthEvent {
     pub wiki_url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthRestoredEvent {
     pub instance_name: String,
@@ -243,7 +248,7 @@ pub struct HealthRestoredEvent {
     pub wiki_url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationUpdateEvent {
     pub application_url: String,
@@ -253,7 +258,7 @@ pub struct ApplicationUpdateEvent {
     pub previous_version: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ManualInteractionRequiredEvent {
     pub application_url: String,
@@ -269,7 +274,7 @@ pub struct ManualInteractionRequiredEvent {
     pub release: Release,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "eventType")]
 pub enum SonarrEvent {
     Grab(GrabEvent),
@@ -304,13 +309,8 @@ impl std::fmt::Display for SonarrEvent {
     }
 }
 
-pub fn router(
-    sender: mpsc::UnboundedSender<SonarrEvent>,
-    closer: watch::Sender<bool>,
-) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(get_webhook))
-        .with_state((sender, closer))
+pub struct SonarrWebhook {
+    listeners: Mutex<Vec<mpsc::UnboundedSender<SonarrEvent>>>,
 }
 
 #[utoipa::path(
@@ -326,7 +326,7 @@ pub fn router(
     tag  = TAG
 )]
 async fn get_webhook(
-    State((state, closer)): State<(mpsc::UnboundedSender<SonarrEvent>, watch::Sender<bool>)>,
+    State(webhook): State<Arc<SonarrWebhook>>,
     json_str: String,
 ) -> impl IntoResponse {
     trace!("Event JSON: {}", json_str);
@@ -340,15 +340,54 @@ async fn get_webhook(
             );
         }
     };
-    if let Err(e) = state.send(data) {
-        error!("{}", e.to_string());
-        if let Err(e) = closer.send(true) {
-            error!("Could not send close request: {e}");
-        }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(MessageResponse::new(e.to_string())),
-        );
-    };
+    webhook.emit(&data);
+    // if let Err(e) = state.send(data) {
+    //     error!("{}", e.to_string());
+    //     if let Err(e) = closer.send(true) {
+    //         error!("Could not send close request: {e}");
+    //     }
+    //     return (
+    //         StatusCode::INTERNAL_SERVER_ERROR,
+    //         Json(MessageResponse::new(e.to_string())),
+    //     );
+    // };
     (StatusCode::OK, Json(MessageResponse::ok()))
+}
+
+impl SonarrWebhook {
+    pub fn new() -> Arc<Self> {
+        Arc::new(SonarrWebhook {
+            listeners: Mutex::new(vec![]),
+        })
+    }
+
+    pub fn router(self: Arc<Self>) -> OpenApiRouter {
+        OpenApiRouter::new()
+            .routes(routes!(get_webhook))
+            .with_state(self)
+    }
+}
+
+impl WebhookListener for SonarrWebhook {
+    type Event = SonarrEvent;
+
+    fn add_listener(&self, listener: impl Fn(SonarrEvent) + Send + 'static) {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        self.listeners.blocking_lock().push(tx);
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                listener(event);
+            }
+        });
+    }
+}
+
+impl WebhookEmitter for SonarrWebhook {
+    type Event = SonarrEvent;
+
+    fn emit(&self, event: &SonarrEvent) {
+        for tx in self.listeners.blocking_lock().iter() {
+            let _ = tx.send(event.clone());
+        }
+    }
 }
